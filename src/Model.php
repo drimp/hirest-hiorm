@@ -11,7 +11,7 @@ class Model {
 	const DIRECTION_ASC      = 'ASC';
 	const DIRECTION_DESC     = 'DESC';
 
-	public static $PDO_connection = null;
+	public static $connection = null; // PDO connection
 
 	public static $table = null; // Models table
 
@@ -31,11 +31,12 @@ class Model {
 	protected $isNew      = true; // Not yet inserted into table
 	protected $lastSQL    = null; // Last query placed here
 	protected $modelData  = [];
-	protected $originData = []; // The Data before manipulation
+	protected $originalData = []; // The Data before manipulation
 
 
 	function __construct($data = null) {
 		if ($data !== null) {
+			$this->originalData = $data;
 			$this->modelData = $data;
 			$this->isNew     = false;
 		}
@@ -164,7 +165,7 @@ class Model {
 	 */
 	public function get() {
 		$rows       = $this->query();
-		$collection = new \Hirest\Hiorm\Model();
+		$collection = new \Hirest\Hiorm\ModelCollection();
 		foreach ($rows AS $row) {
 			$collection->add(static::makeModel($row));
 		}
@@ -186,7 +187,7 @@ class Model {
 		}
 		$this->lastSQL = $SQL;
 
-		return static::$PDO_connection->query($SQL);
+		return static::$connection->query($SQL,\PDO::FETCH_ASSOC);
 	}
 
 
@@ -264,12 +265,12 @@ class Model {
 				if (is_array($condition['value'])) {
 					// Группа значений
 					if ($equality == 'in' || $equality == 'IN') {
-						$value = '(' . implode(', ', array_map(['\Hirest\Hiorm\Model::$PDO_connection','quote'], $condition['value'])) . ')';
+						$value = '(' . implode(', ', array_map(['\Hirest\Hiorm\Model::$connection','quote'], $condition['value'])) . ')';
 					} else { // поле
 						$value = $condition['value'][0];
 					}
 				} else {
-					$value = static::$PDO_connection->quote($condition['value']);
+					$value = static::$connection->quote($condition['value']);
 				}
 				$where .= ' '
 					. $condition['field'] . ' '
@@ -324,7 +325,7 @@ class Model {
 	 * @return $this
 	 */
 	public function limit($limit, $from = 0) {
-		$this->limit = static::$PDO_connection->quote($limit) . ' OFFSET ' . static::$PDO_connection->quote($from);
+		$this->limit = static::$connection->quote($limit) . ' OFFSET ' . static::$connection->quote($from);
 
 		return $this;
 	}
@@ -477,7 +478,7 @@ class Model {
 			.implode('`, `', array_keys($this->getModelData()))."`) VALUES (''"
 			.implode("', '", $this->getModelData())."')";
 		$this->query($query, true);
-		$this->modelData['id'] = static::$PDO_connection->lastInsertId();
+		$this->modelData['id'] = static::$connection->lastInsertId();
 		$this->isNew           = false;
 
 		return $this;
@@ -493,6 +494,15 @@ class Model {
 		return $this->modelData;
 	}
 
+
+	/**
+	 * Return original model data array
+	 *
+	 * @return array
+	 */
+	public function getOriginalData() {
+		return $this->originalData;
+	}
 
 	/**
 	 * Update row data in table
@@ -522,14 +532,14 @@ class Model {
 		$SET_parts = array();
 		foreach ($this->modelData AS $field => $value) {
 			if ($value !== null) {
-				$value       = static::$PDO_connection->quote($value);
+				$value       = static::$connection->quote($value);
 				$SET_parts[] = " {$field} = {$value}";
 			} else {
 				$SET_parts[] = " {$field} = NULL";
 			}
 		}
 
-		$SQL .= implode(',', $SET_parts) . " WHERE id = " . static::$PDO_connection->quote($this->modelData['id']);
+		$SQL .= implode(',', $SET_parts) . " WHERE id = " . static::$connection->quote($this->modelData['id']);
 		if ($this->limit) {
 			$SQL .= " LIMIT " . $this->limit;
 		}

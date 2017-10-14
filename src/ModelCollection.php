@@ -2,7 +2,7 @@
 namespace Hirest\Hiorm;
 
 
-class ModelCollection implements Iterator{
+class ModelCollection implements \Iterator{
 
     private $position = 0;
     private $items = [];
