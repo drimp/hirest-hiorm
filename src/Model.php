@@ -3,6 +3,7 @@
 namespace Hirest\Hiorm;
 
 
+
 class Model {
 
 
@@ -17,6 +18,8 @@ class Model {
 
 	public $safe_delete = false; // Safe delete flag (table should have deleted field)
 	public $timestamps  = false; // Automatic timestamps handling (table should have created_at, updated_at fields)
+
+	public static $debug_errors = false;
 
 	// Query Builder variables
 	protected $selectFields  = null;
@@ -43,6 +46,7 @@ class Model {
 	}
 
 
+
 	/**
 	 * Return all rows by conditions from array
 	 *
@@ -55,11 +59,11 @@ class Model {
 			foreach ($conditions AS $field => $value) {
 				$instance->where($field, $value);
 			}
+			return $instance->get();
 		} elseif (is_numeric($conditions)) {
 			$instance->where('id', $conditions);
+			return $instance->first();
 		}
-
-		return $instance->get();
 	}
 
 
@@ -95,6 +99,10 @@ class Model {
 	 * @return \Hirest\Hiorm\Model
 	 */
 	public function where($field, $param = null, $param2 = null) {
+
+		if(!isset($this)){
+			return static::select()->where($field, $param, $param2);
+		}
 
 		// If field param is callable
 		// return a new sub-query
@@ -166,7 +174,8 @@ class Model {
 	public function get() {
 		$rows       = $this->query();
 		$collection = new \Hirest\Hiorm\ModelCollection();
-		foreach ($rows AS $row) {
+		$collection->lastSQL = $this->lastSQL;
+		while ( $row = $rows->fetch()) {
 			$collection->add(static::makeModel($row));
 		}
 
@@ -180,14 +189,22 @@ class Model {
 	 * @param null $SQL
 	 * @param bool $write if it write query (insert-query)
 	 * @return array|resource
+	 * @throws \Exception
 	 */
 	public function  query($SQL = null, $write = false) {
 		if (is_null($SQL)) {
 			$SQL = $this->buildSQL();
 		}
 		$this->lastSQL = $SQL;
-
-		return static::$connection->query($SQL,\PDO::FETCH_ASSOC);
+		$result = static::$connection->query($SQL,\PDO::FETCH_ASSOC);
+		if(!$result){
+			$error = 'Query error';
+			if(static::$debug_errors){
+				$error .= ': '.static::$connection->errorInfo()[2].PHP_EOL.' SQL:'.$SQL;
+			}
+			throw new \Exception($error);
+		}
+		return $result;
 	}
 
 
@@ -265,7 +282,10 @@ class Model {
 				if (is_array($condition['value'])) {
 					// Группа значений
 					if ($equality == 'in' || $equality == 'IN') {
-						$value = '(' . implode(', ', array_map(['\Hirest\Hiorm\Model::$connection','quote'], $condition['value'])) . ')';
+						$condition['value'] = array_map(function($item){
+							return self::$connection->quote($item);
+						}, $condition['value']);
+						$value = '(' . implode(', ', $condition['value']) . ')';
 					} else { // поле
 						$value = $condition['value'][0];
 					}
@@ -303,8 +323,15 @@ class Model {
 	 * @param null $conditions array [field => search_value] OR ID
 	 * @return YModel
 	 */
-	public static function first($conditions = null) {
-		$instance = static::select()->limit(1);
+	public function first($conditions = null) {
+		if(!isset($this)){
+			$instance = static::select();
+		}else{
+			$instance = $this;
+		}
+
+		$instance->limit(1);
+
 		if (is_array($conditions)) {
 			foreach ($conditions AS $field => $value) {
 				$instance->where($field, $value);
@@ -325,7 +352,7 @@ class Model {
 	 * @return $this
 	 */
 	public function limit($limit, $from = 0) {
-		$this->limit = static::$connection->quote($limit) . ' OFFSET ' . static::$connection->quote($from);
+		$this->limit = (int) $limit . ' OFFSET ' . (int) $from;
 
 		return $this;
 	}
@@ -470,13 +497,21 @@ class Model {
 
 		// If model have timestamps - handle it
 		if ($this->timestamps) {
-			$this->modelData['updated_at'] = 'NOW()';
-			$this->modelData['created_at'] = 'NOW()';
+			$this->modelData['updated_at'] = date('Y-m-d H:i:s');
+			$this->modelData['created_at'] = date('Y-m-d H:i:s');
 		}
 
+		$values = [];
+		foreach ($this->modelData AS $value){
+			if(is_array($value)){
+				$values[] = array_shift($value);
+			}else{
+				$values[] = "'".$value."'";
+			}
+		}
 		$query = "INSERT INTO `".static::$table."` (`"
-			.implode('`, `', array_keys($this->getModelData()))."`) VALUES (''"
-			.implode("', '", $this->getModelData())."')";
+			.implode('`, `', array_keys($this->modelData))."`) VALUES ("
+			.implode(", ", $values).")";
 		$this->query($query, true);
 		$this->modelData['id'] = static::$connection->lastInsertId();
 		$this->isNew           = false;
@@ -490,10 +525,35 @@ class Model {
 	 *
 	 * @return array
 	 */
-	public function getModelData() {
+	public function getModelData( $cast_types = true ) {
+		if($cast_types){
+			return self::cast_types($this->modelData);
+		}
 		return $this->modelData;
 	}
 
+
+	protected static function cast_types($array){
+		return array_map(function($string){
+			if($string === null){
+				return null;
+			}
+			if(is_iterable($string)){
+				return self::cast_types($string);
+			}
+			$string=trim($string);
+			if(!preg_match("/[^0-9.]+/",$string)){
+				if(preg_match("/[.]+/",$string)){
+					return (double)$string;
+				}else{
+					return (int)$string;
+				}
+			}
+			if($string=="true") return true;
+			if($string=="false") return false;
+			return (string)$string;
+		}, $array);
+	}
 
 	/**
 	 * Return original model data array
@@ -514,17 +574,17 @@ class Model {
 
 		// Can not update if row have not ID value
 		if (!isset($this->modelData['id'])) {
-			throw new Exception('Cant update table ' . static::$table . ' ID missed');
+			throw new \Exception('Cant update table ' . static::$table . ' ID missed');
 		}
 
 		// Can not update if row was not saved
 		if ($this->isNew()) {
-			throw new Exception('Cant update table ' . static::$table . ' because model is new');
+			throw new \Exception('Cant update table ' . static::$table . ' because model is new');
 		}
 
 		// If model have timestamps
 		if ($this->timestamps) {
-			$this->modelData['updated_at'] = 'NOW()';
+			$this->modelData['updated_at'] = date('Y-m-d H:i:s');
 		}
 
 		// Build a query
@@ -532,7 +592,7 @@ class Model {
 		$SET_parts = array();
 		foreach ($this->modelData AS $field => $value) {
 			if ($value !== null) {
-				$value       = static::$connection->quote($value);
+				$value       = is_array($value) ? array_shift($value) : static::$connection->quote($value);
 				$SET_parts[] = " {$field} = {$value}";
 			} else {
 				$SET_parts[] = " {$field} = NULL";
