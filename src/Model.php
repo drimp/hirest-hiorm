@@ -3,7 +3,6 @@
 namespace Hirest\Hiorm;
 
 
-
 class Model {
 
 
@@ -31,20 +30,19 @@ class Model {
 	protected $collectMethod = self::COLLECT_METHOD_AND; // Next WHERE block composition method
 
 
-	protected $isNew      = true; // Not yet inserted into table
-	protected $lastSQL    = null; // Last query placed here
-	protected $modelData  = [];
+	protected $isNew        = true; // Not yet inserted into table
+	protected $lastSQL      = null; // Last query placed here
+	protected $modelData    = [];
 	protected $originalData = []; // The Data before manipulation
 
 
 	function __construct($data = null) {
 		if ($data !== null) {
 			$this->originalData = $data;
-			$this->modelData = $data;
-			$this->isNew     = false;
+			$this->modelData    = $data;
+			$this->isNew        = false;
 		}
 	}
-
 
 
 	/**
@@ -59,9 +57,11 @@ class Model {
 			foreach ($conditions AS $field => $value) {
 				$instance->where($field, $value);
 			}
+
 			return $instance->get();
 		} elseif (is_numeric($conditions)) {
 			$instance->where('id', $conditions);
+
 			return $instance->first();
 		}
 	}
@@ -100,13 +100,13 @@ class Model {
 	 */
 	public function where($field, $param = null, $param2 = null) {
 
-		if(!isset($this)){
+		if (!isset($this)) {
 			return static::select()->where($field, $param, $param2);
 		}
 
 		// If field param is callable
 		// return a new sub-query
-		if (is_object($field) && ($field instanceof Closure)) {
+		if (is_object($field) && ($field instanceof \Closure)) {
 			return $this->subWhere($field);
 		}
 
@@ -172,11 +172,11 @@ class Model {
 	 * @return \Hirest\Hiorm\Model[]
 	 */
 	public function get() {
-		$rows       = $this->query();
-		$collection = new \Hirest\Hiorm\ModelCollection();
+		$rows                = $this->query();
+		$collection          = new \Hirest\Hiorm\ModelCollection();
 		$collection->lastSQL = $this->lastSQL;
-		while ( $row = $rows->fetch()) {
-			$collection->add(static::makeModel($row));
+		while ($row = $rows->fetch()) {
+			$collection->add(static::makeModel($row, false));
 		}
 
 		return $collection;
@@ -191,19 +191,20 @@ class Model {
 	 * @return array|resource
 	 * @throws \Exception
 	 */
-	public function  query($SQL = null, $write = false) {
+	public function query($SQL = null, $write = false) {
 		if (is_null($SQL)) {
 			$SQL = $this->buildSQL();
 		}
 		$this->lastSQL = $SQL;
-		$result = static::$connection->query($SQL,\PDO::FETCH_ASSOC);
-		if(!$result){
+		$result        = static::$connection->query($SQL, \PDO::FETCH_ASSOC);
+		if (!$result) {
 			$error = 'Query error';
-			if(static::$debug_errors){
-				$error .= ': '.static::$connection->errorInfo()[2].PHP_EOL.' SQL:'.$SQL;
+			if (static::$debug_errors) {
+				$error .= ': ' . static::$connection->errorInfo()[2] . PHP_EOL . ' SQL:' . $SQL;
 			}
 			throw new \Exception($error);
 		}
+
 		return $result;
 	}
 
@@ -282,10 +283,10 @@ class Model {
 				if (is_array($condition['value'])) {
 					// Группа значений
 					if ($equality == 'in' || $equality == 'IN') {
-						$condition['value'] = array_map(function($item){
+						$condition['value'] = array_map(function($item) {
 							return self::$connection->quote($item);
 						}, $condition['value']);
-						$value = '(' . implode(', ', $condition['value']) . ')';
+						$value              = '(' . implode(', ', $condition['value']) . ')';
 					} else { // поле
 						$value = $condition['value'][0];
 					}
@@ -308,12 +309,15 @@ class Model {
 	 * same new \Hirest\Hiorm\Model($modelData)
 	 *
 	 * @param $modelData - data array
+	 * @param $isNew     - are this model still not inserted in DB
 	 * @return \Hirest\Hiorm\Model
 	 */
-	public static function makeModel($modelData) {
-		$model_name = get_called_class();
+	public static function makeModel($modelData, $isNew = true) {
+		$model_name   = get_called_class();
+		$model        = new $model_name($modelData);
+		$model->isNew = $isNew;
 
-		return new $model_name($modelData);
+		return $model;
 	}
 
 
@@ -324,9 +328,9 @@ class Model {
 	 * @return YModel
 	 */
 	public function first($conditions = null) {
-		if(!isset($this)){
+		if (!isset($this)) {
 			$instance = static::select();
-		}else{
+		} else {
 			$instance = $this;
 		}
 
@@ -352,7 +356,7 @@ class Model {
 	 * @return $this
 	 */
 	public function limit($limit, $from = 0) {
-		$this->limit = (int) $limit . ' OFFSET ' . (int) $from;
+		$this->limit = (int)$limit . ' OFFSET ' . (int)$from;
 
 		return $this;
 	}
@@ -440,7 +444,7 @@ class Model {
 			throw new \Exception('Cant delete from table ' . static::$table . ' ID missed');
 		}
 
-		if (!$this->isNew()) {
+		if ($this->isNew()) {
 			throw new \Exception('Cant delete from table ' . static::$table . ' because model is new');
 		}
 
@@ -502,16 +506,16 @@ class Model {
 		}
 
 		$values = [];
-		foreach ($this->modelData AS $value){
-			if(is_array($value)){
+		foreach ($this->modelData AS $value) {
+			if (is_array($value)) {
 				$values[] = array_shift($value);
-			}else{
-				$values[] = "'".$value."'";
+			} else {
+				$values[] = "'" . $value . "'";
 			}
 		}
-		$query = "INSERT INTO `".static::$table."` (`"
-			.implode('`, `', array_keys($this->modelData))."`) VALUES ("
-			.implode(", ", $values).")";
+		$query = "INSERT INTO `" . static::$table . "` (`"
+			. implode('`, `', array_keys($this->modelData)) . "`) VALUES ("
+			. implode(", ", $values) . ")";
 		$this->query($query, true);
 		$this->modelData['id'] = static::$connection->lastInsertId();
 		$this->isNew           = false;
@@ -525,32 +529,34 @@ class Model {
 	 *
 	 * @return array
 	 */
-	public function getModelData( $cast_types = true ) {
-		if($cast_types){
+	public function getModelData($cast_types = true) {
+		if ($cast_types) {
 			return self::cast_types($this->modelData);
 		}
+
 		return $this->modelData;
 	}
 
 
-	protected static function cast_types($array){
-		return array_map(function($string){
-			if($string === null){
+	protected static function cast_types($array) {
+		return array_map(function($string) {
+			if ($string === null) {
 				return null;
 			}
-			if(is_iterable($string)){
+			if (\is_iterable($string)) {
 				return self::cast_types($string);
 			}
-			$string=trim($string);
-			if(!preg_match("/[^0-9.]+/",$string)){
-				if(preg_match("/[.]+/",$string)){
+			$string = trim($string);
+			if (!preg_match("/[^0-9.]+/", $string)) {
+				if (preg_match("/[.]+/", $string)) {
 					return (double)$string;
-				}else{
+				} else {
 					return (int)$string;
 				}
 			}
-			if($string=="true") return true;
-			if($string=="false") return false;
+			if ($string == "true") return true;
+			if ($string == "false") return false;
+
 			return (string)$string;
 		}, $array);
 	}
